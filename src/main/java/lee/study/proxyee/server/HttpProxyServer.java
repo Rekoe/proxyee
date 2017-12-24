@@ -193,12 +193,9 @@ public class HttpProxyServer {
 								HttpRequest request = pipeline.getHttpRequest();
 								HttpHeaders header = request.headers();
 								if (BooleanUtils.toBoolean(header.get("is_json"))) {
-									contentBuf.writeBytes(httpContent.content());
 									try {
 										contentBuf.writeBytes(httpContent.content());
 										if (httpContent instanceof LastHttpContent) {
-											String contentStr = contentBuf.toString(Charset.defaultCharset());
-											contentBuf.clear().writeBytes(contentStr.getBytes());
 											HttpContent hookHttpContent = new DefaultLastHttpContent();
 											String content = contentBuf.copy().toString(Charset.forName("utf8"));
 											hookHttpContent.content().writeBytes(contentBuf);
