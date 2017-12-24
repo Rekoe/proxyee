@@ -15,6 +15,8 @@ import org.nutz.log.Log;
 import org.nutz.log.Logs;
 
 import io.netty.bootstrap.ServerBootstrap;
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.PooledByteBufAllocator;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelInitializer;
@@ -22,17 +24,21 @@ import io.netty.channel.ChannelOption;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
+import io.netty.handler.codec.http.DefaultLastHttpContent;
 import io.netty.handler.codec.http.HttpContent;
 import io.netty.handler.codec.http.HttpHeaderNames;
 import io.netty.handler.codec.http.HttpHeaders;
 import io.netty.handler.codec.http.HttpRequest;
+import io.netty.handler.codec.http.HttpResponse;
 import io.netty.handler.codec.http.HttpResponseStatus;
 import io.netty.handler.codec.http.HttpServerCodec;
+import io.netty.handler.codec.http.LastHttpContent;
 import io.netty.handler.logging.LogLevel;
 import io.netty.handler.logging.LoggingHandler;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.ssl.util.InsecureTrustManagerFactory;
+import io.netty.util.ReferenceCountUtil;
 import io.netty.util.internal.logging.InternalLoggerFactory;
 import lee.study.proxyee.crt.CertUtil;
 import lee.study.proxyee.exception.HttpProxyExceptionHandle;
@@ -140,6 +146,8 @@ public class HttpProxyServer {
 					public void init(HttpProxyInterceptPipeline pipeline) {
 						pipeline.addLast(new CertDownIntercept()); // 处理证书下载
 						pipeline.addLast(new HttpProxyIntercept() {
+							private ByteBuf contentBuf;
+
 							@Override
 							public void beforeRequest(Channel clientChannel, HttpRequest httpRequest, HttpProxyInterceptPipeline pipeline) throws Exception {
 								// 替换UA，伪装成手机浏览器
@@ -155,8 +163,9 @@ public class HttpProxyServer {
 								}
 								boolean is_filter = StringUtils.contains(httpRequest.uri(), "/address/getRegionByParentNew.do");
 								header.add("is_json", is_filter);
-								if (is_filter)
+								if (is_filter) {
 									System.out.println(httpRequest.uri());
+								}
 							}
 
 							@Override
@@ -170,17 +179,38 @@ public class HttpProxyServer {
 							}
 
 							@Override
+							public void afterResponse(Channel clientChannel, Channel proxyChannel, HttpResponse httpResponse, HttpProxyInterceptPipeline pipeline) throws Exception {
+								HttpRequest request = pipeline.getHttpRequest();
+								HttpHeaders header = request.headers();
+								if (BooleanUtils.toBoolean(header.get("is_json"))) {
+									contentBuf = PooledByteBufAllocator.DEFAULT.buffer();
+								}
+								pipeline.afterResponse(clientChannel, proxyChannel, httpResponse);
+							}
+
+							@Override
 							public void afterResponse(Channel clientChannel, Channel proxyChannel, HttpContent httpContent, HttpProxyInterceptPipeline pipeline) throws Exception {
 								HttpRequest request = pipeline.getHttpRequest();
 								HttpHeaders header = request.headers();
 								if (BooleanUtils.toBoolean(header.get("is_json"))) {
-									String content = httpContent.copy().content().toString(Charset.forName("utf8"));
-									System.out.println(content);
+									contentBuf.writeBytes(httpContent.content());
+									try {
+										contentBuf.writeBytes(httpContent.content());
+										if (httpContent instanceof LastHttpContent) {
+											String contentStr = contentBuf.toString(Charset.defaultCharset());
+											contentBuf.clear().writeBytes(contentStr.getBytes());
+											HttpContent hookHttpContent = new DefaultLastHttpContent();
+											String content = contentBuf.copy().toString(Charset.forName("utf8"));
+											hookHttpContent.content().writeBytes(contentBuf);
+											System.out.println(">>>>> " + content);
+											pipeline.getDefault().afterResponse(clientChannel, proxyChannel, hookHttpContent, pipeline);
+										}
+									} finally {
+										ReferenceCountUtil.release(httpContent);
+									}
+								} else {
+									pipeline.afterResponse(clientChannel, proxyChannel, httpContent);
 								}
-								// 拦截响应，添加一个响应头
-								// pipeline.getHttpRequest().headers().add("intercept", "test");
-								// 转到下一个拦截器处理
-								pipeline.afterResponse(clientChannel, proxyChannel, httpContent);
 							}
 						});
 					}
