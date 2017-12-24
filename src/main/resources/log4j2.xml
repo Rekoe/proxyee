@@ -8,7 +8,7 @@
 		</Console>
 	</Appenders>
 	<Loggers>
-		<Root level="DEBUG">
+		<Root level="ERROR">
 			<AppenderRef ref="STDOUT" />
 		</Root>
 	</Loggers>

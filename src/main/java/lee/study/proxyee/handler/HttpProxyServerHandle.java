@@ -187,9 +187,4 @@ public class HttpProxyServerHandle extends ChannelInboundHandlerAdapter {
 		}
 		cf.channel().writeAndFlush(msg);
 	}
-
-	public static void main(String[] args) {
-		System.out.println((char) 22);
-	}
-
 }

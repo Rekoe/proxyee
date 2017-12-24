@@ -2,6 +2,8 @@ package lee.study.proxyee.intercept;
 
 import java.net.InetSocketAddress;
 
+import org.nutz.lang.Streams;
+
 import io.netty.channel.Channel;
 import io.netty.handler.codec.http.DefaultHttpResponse;
 import io.netty.handler.codec.http.DefaultLastHttpContent;
@@ -35,7 +37,7 @@ public class CertDownIntercept extends HttpProxyIntercept {
 			crtFlag = true;
 			if (httpRequest.uri().matches("^.*/ca.crt.*$")) { // 下载证书
 				HttpResponse httpResponse = new DefaultHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK);
-				byte[] bts = CertUtil.loadCert(Thread.currentThread().getContextClassLoader().getResourceAsStream("ca.crt")).getEncoded();
+				byte[] bts = CertUtil.loadCert(Streams.fileIn("ca.crt")).getEncoded();
 				httpResponse.headers().set(HttpHeaderNames.CONTENT_TYPE, "application/x-x509-ca-cert");
 				httpResponse.headers().set(HttpHeaderNames.CONTENT_LENGTH, bts.length);
 				httpResponse.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.CLOSE);

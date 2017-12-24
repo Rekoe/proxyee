@@ -10,6 +10,9 @@ import java.util.Map.Entry;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.nutz.lang.Streams;
+import org.nutz.log.Log;
+import org.nutz.log.Logs;
 
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
@@ -44,19 +47,21 @@ import lee.study.proxyee.proxy.ProxyType;
 
 public class HttpProxyServer {
 
+	private final static Log log = Logs.get();
 	// http代理隧道握手成功
 	public final static HttpResponseStatus SUCCESS = new HttpResponseStatus(200, "Connection established");
 
-	private HttpProxyServerConfig serverConfig;
-	private HttpProxyInterceptInitializer proxyInterceptInitializer;
-	private HttpProxyExceptionHandle httpProxyExceptionHandle;
+	private HttpProxyServerConfig serverConfig = new HttpProxyServerConfig();;
+	private HttpProxyInterceptInitializer proxyInterceptInitializer = new HttpProxyInterceptInitializer();
+	private HttpProxyExceptionHandle httpProxyExceptionHandle = new HttpProxyExceptionHandle();
 	private ProxyConfig proxyConfig;
 
 	public HttpProxyServer() {
+		InternalLoggerFactory.setDefaultFactory(new Log4j2LoggerFactory());
 		try {
 			init();
 		} catch (Exception e) {
-			e.printStackTrace();
+			log.error(e);
 		}
 	}
 
@@ -67,30 +72,20 @@ public class HttpProxyServer {
 	private void init() throws Exception {
 		// 注册BouncyCastleProvider加密库
 		Security.addProvider(new BouncyCastleProvider());
-		if (serverConfig == null) {
-			serverConfig = new HttpProxyServerConfig();
-			serverConfig.setClientSslCtx(SslContextBuilder.forClient().trustManager(InsecureTrustManagerFactory.INSTANCE).build());
-			ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
-			X509Certificate certificate = CertUtil.loadCert(classLoader.getResourceAsStream("ca.crt"));
-			// 读取CA证书使用者信息
-			serverConfig.setIssuer(CertUtil.getSubject(certificate));
-			// 读取CA证书有效时段(server证书有效期超出CA证书的，在手机上会提示证书不安全)
-			serverConfig.setCaNotBefore(certificate.getNotBefore());
-			serverConfig.setCaNotAfter(certificate.getNotAfter());
-			// CA私钥用于给动态生成的网站SSL证书签证
-			serverConfig.setCaPriKey(CertUtil.loadPriKey(classLoader.getResourceAsStream("ca_private.der")));
-			// 生产一对随机公私钥用于网站SSL证书动态创建
-			KeyPair keyPair = CertUtil.genKeyPair();
-			serverConfig.setServerPriKey(keyPair.getPrivate());
-			serverConfig.setServerPubKey(keyPair.getPublic());
-			serverConfig.setLoopGroup(new NioEventLoopGroup());
-		}
-		if (proxyInterceptInitializer == null) {
-			proxyInterceptInitializer = new HttpProxyInterceptInitializer();
-		}
-		if (httpProxyExceptionHandle == null) {
-			httpProxyExceptionHandle = new HttpProxyExceptionHandle();
-		}
+		serverConfig.setClientSslCtx(SslContextBuilder.forClient().trustManager(InsecureTrustManagerFactory.INSTANCE).build());
+		X509Certificate certificate = CertUtil.loadCert(Streams.fileIn("ca.crt"));
+		// 读取CA证书使用者信息
+		serverConfig.setIssuer(CertUtil.getSubject(certificate));
+		// 读取CA证书有效时段(server证书有效期超出CA证书的，在手机上会提示证书不安全)
+		serverConfig.setCaNotBefore(certificate.getNotBefore());
+		serverConfig.setCaNotAfter(certificate.getNotAfter());
+		// CA私钥用于给动态生成的网站SSL证书签证
+		serverConfig.setCaPriKey(CertUtil.loadPriKey(Streams.fileIn("ca_private.der")));
+		// 生产一对随机公私钥用于网站SSL证书动态创建
+		KeyPair keyPair = CertUtil.genKeyPair();
+		serverConfig.setServerPriKey(keyPair.getPrivate());
+		serverConfig.setServerPubKey(keyPair.getPublic());
+		serverConfig.setLoopGroup(new NioEventLoopGroup());
 	}
 
 	public HttpProxyServer serverConfig(HttpProxyServerConfig serverConfig) {
@@ -114,7 +109,6 @@ public class HttpProxyServer {
 	}
 
 	public void start(int port) {
-		InternalLoggerFactory.setDefaultFactory(new Log4j2LoggerFactory());
 		EventLoopGroup bossGroup = new NioEventLoopGroup();
 		EventLoopGroup workerGroup = new NioEventLoopGroup();
 		try {
@@ -131,7 +125,7 @@ public class HttpProxyServer {
 			ChannelFuture f = b.bind(port).sync();
 			f.channel().closeFuture().sync();
 		} catch (Exception e) {
-			e.printStackTrace();
+			log.error(e);
 		} finally {
 			bossGroup.shutdownGracefully();
 			workerGroup.shutdownGracefully();
@@ -139,8 +133,6 @@ public class HttpProxyServer {
 	}
 
 	public static void main(String[] args) throws Exception {
-		// new HttpProxyServer().start(9999);
-
 		new HttpProxyServer().proxyConfig(new ProxyConfig(ProxyType.HTTP, "127.0.0.1", 1087))
 				// //使用socks5二级代理
 				.proxyInterceptInitializer(new HttpProxyInterceptInitializer() {
@@ -157,11 +149,13 @@ public class HttpProxyServer {
 								HttpHeaders header = pipeline.getHttpRequest().headers();
 								List<Entry<String, String>> entrys = header.entries();
 								for (Entry<String, String> entry : entrys) {
-									System.out.println("key = " + entry.getKey() + " value = " + entry.getValue());
+									if (log.isDebugEnabled()) {
+										log.debug("key = " + entry.getKey() + " value = " + entry.getValue());
+									}
 								}
-								boolean isImage = StringUtils.equalsAny("json", header.get("Accept"));
-								header.add("is_json", (isImage || StringUtils.equalsAny(header.get("Accept"), "*/*")) && StringUtils.contains(httpRequest.uri(), "/address/"));
-								if (StringUtils.contains(httpRequest.uri(), "/address/"))
+								boolean is_filter = StringUtils.contains(httpRequest.uri(), "/address/getRegionByParentNew.do");
+								header.add("is_json", is_filter);
+								if (is_filter)
 									System.out.println(httpRequest.uri());
 							}
 
@@ -181,7 +175,7 @@ public class HttpProxyServer {
 								HttpHeaders header = request.headers();
 								if (BooleanUtils.toBoolean(header.get("is_json"))) {
 									String content = httpContent.copy().content().toString(Charset.forName("utf8"));
-									System.out.println(request.uri() + " >>>>> " + content);
+									System.out.println(content);
 								}
 								// 拦截响应，添加一个响应头
 								// pipeline.getHttpRequest().headers().add("intercept", "test");
